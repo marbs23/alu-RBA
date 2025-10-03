@@ -4,8 +4,8 @@ module alu(input [4:0] a, b,
     output wire [3:0] ALUFlags);
     
     wire neg, zero, carry, overflow;
-    wire [4:0] condinvb;  // Corregido a 5 bits
-    wire [4:0] sum;       // Corregido a 5 bits
+    wire [4:0] condinvb; 
+    wire [4:0] sum;      
     
     assign condinvb = ALUControl[0] ? ~b : b;
     assign sum = a + condinvb + ALUControl[0];
