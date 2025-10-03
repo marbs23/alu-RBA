@@ -1,4 +1,4 @@
-
+/*
 module alu(input [4:0] a, b,
     input [1:0] ALUControl,
     output reg [4:0] Result,
@@ -28,7 +28,27 @@ module alu(input [4:0] a, b,
     assign ALUFlags = {neg, zero, carry, overflow};
 
 endmodule
-/*
+*/
+
+
+
+module shift(input [2:0] bshift,
+             input [4:0] a,
+             output reg [4:0] Result);
+    always @(*)
+    begin
+    case (bshift[2:0])
+    3'b000: Result = a >> 0;
+    3'b001: Result = a >> 1;
+    3'b010: Result = a >> 2;
+    3'b011: Result = a >> 3;
+    3'b100: Result = a >> 4;
+    3'b101: Result = a >> 5;
+    3'b110: Result = a >> 6;
+    3'b111: Result = a >> 7;
+    endcase
+    end
+endmodule
 
 
 module alu(input [4:0] a, b,
@@ -63,29 +83,14 @@ module alu(input [4:0] a, b,
 endmodule
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-*/
+module top(
+    input [4:0] a, b,
+    input [2:0] ALUControl,
+    input [2:0] bshift,
+    output [4:0] Result,
+    output wire [3:0] ALUFlags);
     
+    wire [4:0] w1;
+    shift mudi(bshift, a, w1);
+    alu mudo(w1,b,ALUControl,Result,ALUFlags); 
+endmodule
