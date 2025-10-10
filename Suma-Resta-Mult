@@ -1,0 +1,180 @@
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company:
+// Engineer:
+//
+// Create Date: 10/10/2025 04:43:47 PM
+// Design Name:
+// Module Name: m12
+// Project Name:
+// Target Devices:
+// Tool Versions:
+// Description:
+//
+// Dependencies:
+//
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+//
+//////////////////////////////////////////////////////////////////////////////////
+
+module FP_ALU_if (
+    input  [31:0] op_a, op_b,   // IEEE-754 single-precision operands
+    input  [2:0]  op_code,      // 000=ADD, 001=SUB, 010=MUL, 011=DIV
+    output reg [31:0] result
+);
+
+    reg sign_a, sign_b, sign_res;
+    reg [7:0] exp_a, exp_b, exp_res;
+    reg [23:0] mant_a, mant_b;
+    reg [47:0] mant_mult;
+    reg [23:0] mant_res;
+    reg [7:0] exp_diff;
+    reg [24:0] mant_sum;
+    reg carry;
+
+    always @(*) begin
+        sign_a = op_a[31];
+        sign_b = op_b[31];
+        exp_a  = op_a[30:23];
+        exp_b  = op_b[30:23];
+        mant_a = {1'b1, op_a[22:0]};
+        mant_b = {1'b1, op_b[22:0]};
+        sign_res = 0;
+        exp_res = 0;
+        mant_res = 0;
+
+        if (op_code == 3'b000 || op_code == 3'b001) begin
+           
+            if (op_code == 3'b001)
+                sign_b = ~sign_b;
+
+            if (exp_a > exp_b) begin
+                exp_diff = exp_a - exp_b;
+                mant_b = mant_b >> exp_diff;
+                exp_res = exp_a;
+            end else if (exp_b > exp_a) begin
+                exp_diff = exp_b - exp_a;
+                mant_a = mant_a >> exp_diff;
+                exp_res = exp_b;
+            end else begin
+                exp_res = exp_a;
+            end
+
+            // Add/sub mantissas
+            if (sign_a == sign_b) begin
+                mant_sum = mant_a + mant_b;
+                sign_res = sign_a;
+            end else begin
+                if (mant_a >= mant_b) begin
+                    mant_sum = mant_a - mant_b;
+                    sign_res = sign_a;
+                end else begin
+                    mant_sum = mant_b - mant_a;
+                    sign_res = sign_b;
+                end
+            end
+
+            // Normalize
+            if (mant_sum[24]) begin
+                mant_sum = mant_sum >> 1;
+                exp_res = exp_res + 1;
+            end
+
+            mant_res = mant_sum[23:0];
+        end
+
+        else if (op_code == 3'b010) begin
+            sign_res = sign_a ^ sign_b;
+            exp_res  = exp_a + exp_b - 127;
+            mant_mult = mant_a * mant_b;
+            mant_res  = mant_mult[46:23];
+            if (mant_mult[47]) begin
+                mant_res = mant_mult[47:24];
+                exp_res = exp_res + 1;
+            end
+        end
+
+        else if (op_code == 3'b011) begin
+            sign_res = sign_a ^ sign_b;
+            exp_res  = exp_a - exp_b + 127;
+            mant_mult = (mant_a << 23) / mant_b;
+            mant_res  = mant_mult[23:0];
+        end
+
+        else begin
+            // default
+            sign_res = 0;
+            exp_res  = 0;
+            mant_res = 0;
+        end
+
+        // Reassemble IEEE-754 result
+        result = {sign_res, exp_res, mant_res[22:0]};
+    end
+endmodule
+
+
+`timescale 1ns / 1ps
+//////////////////////////////////////////////////////////////////////////////////
+// Company:
+// Engineer:
+//
+// Create Date: 10/10/2025 05:38:14 PM
+// Design Name:
+// Module Name: m123
+// Project Name:
+// Target Devices:
+// Tool Versions:
+// Description:
+//
+// Dependencies:
+//
+// Revision:
+// Revision 0.01 - File Created
+// Additional Comments:
+//
+//////////////////////////////////////////////////////////////////////////////////
+
+module tb_FP_ALU_if();
+
+    reg  [31:0] op_a, op_b;
+    reg  [2:0]  op_code;
+    wire [31:0] result;
+
+    FP_ALU_if dut (
+        .op_a(op_a),
+        .op_b(op_b),
+        .op_code(op_code),
+        .result(result)
+    );
+
+    initial begin
+        $dumpfile("fp_alu_if_tb.vcd");
+        $dumpvars(0, tb_FP_ALU_if);
+
+        op_a = 32'h3F800000;
+        op_b = 32'h40000000;
+        op_code = 3'b000;    
+        #10;
+       
+        op_a = 32'h40400000;
+        op_b = 32'h3F800000;
+        op_code = 3'b001;  
+       
+
+        op_a = 32'h40000000;
+        op_b = 32'h40800000;
+        op_code = 3'b010;    
+        #10;
+       
+        op_a = 32'h41000000;
+        op_b = 32'h40000000;
+        op_code = 3'b011;    
+        #10;
+       
+        $finish;
+    end
+
+endmodule
