@@ -128,7 +128,7 @@ begin
     
         integer shift_amt;
         reg [36:0] sh; 
-      shift_amt = (1 - Ehalf); // cuantos pasos por debajo del monimo normal
+      shift_amt = (1 - Ehalf); 
       sh = {mant_ext,13'b0}; // 13 bits para el GRS
         if (shift_amt > 24+13) shift_amt = 24+13; // límite
         
