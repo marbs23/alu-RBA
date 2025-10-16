@@ -14,7 +14,6 @@ module FP_ALU_if (
     localparam EXP_MIN  = 8'd1;
     localparam EXP_MAX  = 8'd254;
 
-    // Campos individuales
     reg sign_a, sign_b, sign_res;
     reg [7:0] exp_a, exp_b, exp_res;
     reg [23:0] mant_a, mant_b;
@@ -37,17 +36,13 @@ module FP_ALU_if (
         exp_res  = 0;
         mant_sum = 0;
 
-       
         case (op_code)
-
-       
         2'b00, 2'b01: begin   
-            reg round_bit, lsb_bit, tie_case, did_round;
+          reg guard_bit, round_bit, sticky_bit, lsb_bit, did_round;
 
             if (op_code == 2'b01)
-                sign_b = ~sign_b;  // Resta = invertir signo de B
+                sign_b = ~sign_b; 
 
-            // Alinear exponentes
             if (exp_a > exp_b) begin
                 exp_diff = exp_a - exp_b;
                 mant_b = mant_b >> exp_diff;
@@ -60,7 +55,6 @@ module FP_ALU_if (
                 exp_res = exp_a;
             end
 
-            // Suma o resta
             if (sign_a == sign_b) begin
                 mant_sum = mant_a + mant_b;
                 sign_res = sign_a;
@@ -74,7 +68,6 @@ module FP_ALU_if (
                 end
             end
 
-            // Normalización
             if (mant_sum[24]) begin
                 mant_sum = mant_sum >> 1;
                 exp_res = exp_res + 1;
@@ -85,21 +78,27 @@ module FP_ALU_if (
                 end
             end
 
-            round_bit = mant_sum[0];
-            lsb_bit   = mant_sum[1];
-            tie_case  = (mant_sum[0] && (mant_sum[0] == 1'b1));
-            did_round = 1'b0;
+            
+          
+          guard_bit  = mant_sum[0];   
+          round_bit  = 1'b0;           
+          sticky_bit = 1'b0;            
+          lsb_bit    = mant_sum[1];   
+          did_round  = 1'b0;
+          
+          if (guard_bit && (lsb_bit == 1'b0)) begin
+            mant_sum[23:1] = mant_sum[23:1] + 1'b1;
+            did_round = 1'b1;
+          end
+          
+          if (mant_sum[23]) begin
+            mant_sum = mant_sum >> 1;
+            exp_res  = exp_res + 1;
+          end
 
-            if (round_bit) begin
-                if (!tie_case || (tie_case && (lsb_bit == 0))) begin
-                    mant_sum[23:1] = mant_sum[23:1] + 1'b1;
-                    did_round = 1'b1;
-                end
-            end
-
-            flags[2] = (exp_res > EXP_MAX); // overflow
-            flags[1] = (exp_res < EXP_MIN); // underflow
-            flags[0] = did_round;           // inexact
+            flags[2] = (exp_res > EXP_MAX);
+            flags[1] = (exp_res < EXP_MIN);
+            flags[0] = did_round;
 
             if (flags[2])
                 result = {sign_res, 8'hFF, 23'd0};
@@ -109,11 +108,10 @@ module FP_ALU_if (
                 result = {sign_res, exp_res[7:0], mant_sum[22:0]};
         end
 
-        
         2'b10: begin
             reg [47:0] product;
             reg [22:0] frac_final;
-            reg round_bit, lsb_bit, tie_case, did_round;
+            reg guard_bit, round_bit_grs, sticky_bit, lsb_bit, did_round;
             reg overflow, underflow;
 
             sign_res = sign_a ^ sign_b;
@@ -127,20 +125,23 @@ module FP_ALU_if (
                 exp_res = exp_a + exp_b - BIAS;
             end
 
-            round_bit = product[23];
-            lsb_bit   = product[24];
-            tie_case  = (product[22:0] == 0);
+            guard_bit  = product[23];  
+            round_bit_grs  = product[22];         
+            sticky_bit = |product[21:0];      
+            lsb_bit    = product[24];          
             did_round = 1'b0;
 
-            if (round_bit) begin
-                if (!tie_case || (tie_case && (lsb_bit == 0))) begin
-                    product[46:24] = product[46:24] + 1'b1;
-                    did_round = 1'b1;
-                end
+            if (guard_bit && (sticky_bit || (lsb_bit == 1'b0))) begin
+                product[46:24] = product[46:24] + 1'b1;
+                did_round = 1'b1;
+            end
+
+            if (product[46]) begin
+                product = product >> 1;
+                exp_res = exp_res + 1;
             end
 
             frac_final = product[46:24];
-
             overflow  = (exp_res > EXP_MAX);
             underflow = (exp_res < EXP_MIN);
 
@@ -156,11 +157,10 @@ module FP_ALU_if (
                 result = {sign_res, exp_res[7:0], frac_final};
         end
 
-       
         2'b11: begin
             reg [47:0] mant_div;
             reg [22:0] frac_final;
-            reg round_bit, lsb_bit, tie_case, did_round;
+            reg guard_bit, round_bit_d, sticky_bit, lsb_bit, did_round;
             reg overflow, underflow;
 
             sign_res = sign_a ^ sign_b;
@@ -187,16 +187,20 @@ module FP_ALU_if (
                     exp_res  = exp_res - 1;
                 end
 
-                round_bit = mant_div[23];
-                lsb_bit   = mant_div[24];
-                tie_case  = (mant_div[22:0] == 0);
+                guard_bit  = mant_div[23];          
+                round_bit_d  = mant_div[22];          
+                sticky_bit = |mant_div[21:0];       
+                lsb_bit    = mant_div[24];          
                 did_round = 1'b0;
 
-                if (round_bit) begin
-                    if (!tie_case || (tie_case && (lsb_bit == 0))) begin
-                        mant_div[46:24] = mant_div[46:24] + 1'b1;
-                        did_round = 1'b1;
-                    end
+                if (guard_bit && (sticky_bit || (lsb_bit == 1'b0))) begin
+                    mant_div[46:24] = mant_div[46:24] + 1'b1;
+                    did_round = 1'b1;
+                end
+
+                if (mant_div[46]) begin
+                    mant_div = mant_div >> 1;
+                    exp_res  = exp_res + 1;
                 end
 
                 frac_final = mant_div[46:24];
@@ -224,6 +228,7 @@ module FP_ALU_if (
         valid_out = start ? 1'b1 : 1'b0;
     end
 endmodule
+
 
 /////////////////////////////TESTBENCH///////////////////////////////////////
 `timescale 1ns/1ps
