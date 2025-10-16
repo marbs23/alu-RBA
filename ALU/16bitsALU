@@ -1,3 +1,6 @@
+`timescale 1ns/1ns
+
+
 module FP_ALU_if16bits (
     input  [15:0] op_a, op_b,  
     input  [1:0]  op_code,  
@@ -7,7 +10,7 @@ module FP_ALU_if16bits (
     reg sign_a, sign_b, sign_res;
     reg [4:0] exp_a, exp_b, exp_res;
     reg [9:0] mant_a, mant_b;
-    reg [10:0] mant_result;
+    reg [11:0] mant_result;
     reg [4:0] exp_diff;
     reg carry;
 
@@ -134,11 +137,11 @@ module FP_ALU_if16bits (
                     end
                 endcase
 
-                if (mant_result[24]) begin
+                if (mant_result[11]) begin
                     mant_result = mant_result >> 1;
                     exp_res = exp_res + 1;
                 end else begin
-                    while (mant_result[23] == 0 && exp_res > 0) begin
+                    while (mant_result[10] == 0 && exp_res > 0) begin
                         mant_result = mant_result << 1;
                         exp_res  = exp_res - 1;
                     end
@@ -148,7 +151,7 @@ module FP_ALU_if16bits (
             begin
 
                 sign_res = sign_a ^ sign_b; // Result sign
-                exp_res = exp_a + exp_b - 127; // Subtract bias
+                exp_res = exp_a + exp_b - 15; // Subtract bias
                 mant_result = (mant_a * mant_b) >> 23; // Normalize
 
             end
@@ -157,7 +160,7 @@ module FP_ALU_if16bits (
 
             begin
                 sign_res = sign_a ^ sign_b; // Result sign
-                exp_res = exp_a - exp_b + 127; // Add bias
+                exp_res = exp_a - exp_b + 15; // Add bias
                 mant_result = (mant_a << 23) / mant_b; // Normalize
 
             end
