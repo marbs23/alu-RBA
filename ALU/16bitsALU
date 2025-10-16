@@ -1,39 +1,43 @@
-`timescale 1ns/1ns
+`timescale 1ns/1ps
 
 module FP_ALU_if16bits (
-    input  [15:0] op_a, op_b,  
-    input  [1:0]  op_code,  
+    input  [15:0] op_a, op_b,
+    input  [1:0]  op_code,
     output reg [15:0] result
 );
 
-    // Decompose operands
+    // IEEE 754 half precision constants
+    localparam BIAS = 5'd15;
+
+    // Internal registers
     reg sign_a, sign_b, sign_res;
     reg [4:0] exp_a, exp_b, exp_res;
     reg [10:0] mant_a, mant_b;
-    reg [21:0] mant_product;
-    reg [10:0] mant_result;
+    reg [21:0] mant_prod;
+    reg [10:0] mant_res;
     reg [4:0] exp_diff;
 
-    localparam BIAS = 5'd15;
-
     always @(*) begin
+        // --- Decompose inputs ---
         sign_a = op_a[15];
         sign_b = op_b[15];
         exp_a  = op_a[14:10];
         exp_b  = op_b[14:10];
-        mant_a = {1'b1, op_a[9:0]};
-        mant_b = {1'b1, op_b[9:0]};
+        mant_a = (exp_a == 0) ? {1'b0, op_a[9:0]} : {1'b1, op_a[9:0]};
+        mant_b = (exp_b == 0) ? {1'b0, op_b[9:0]} : {1'b1, op_b[9:0]};
 
+        // --- Defaults ---
+        exp_res = 0;
+        mant_res = 0;
         sign_res = 0;
-        exp_res  = 0;
-        mant_result = 0;
 
         case (op_code)
 
         // =========================
-        // SUMA / RESTA
+        // ADD / SUB
         // =========================
         2'b00, 2'b01: begin
+            // Resta = invertir signo de B
             if (op_code == 2'b01)
                 sign_b = ~sign_b;
 
@@ -50,27 +54,27 @@ module FP_ALU_if16bits (
                 exp_res = exp_a;
             end
 
-            // Suma o resta de mantisas
+            // Operación según signo
             if (sign_a == sign_b) begin
-                mant_result = mant_a + mant_b;
+                mant_res = mant_a + mant_b;
                 sign_res = sign_a;
             end else begin
                 if (mant_a >= mant_b) begin
-                    mant_result = mant_a - mant_b;
+                    mant_res = mant_a - mant_b;
                     sign_res = sign_a;
                 end else begin
-                    mant_result = mant_b - mant_a;
+                    mant_res = mant_b - mant_a;
                     sign_res = sign_b;
                 end
             end
 
-            // Normalización
-            if (mant_result[10]) begin
-                mant_result = mant_result >> 1;
+            // Normalizar (chequear overflow o underflow)
+            if (mant_res[10]) begin
+                mant_res = mant_res >> 1;
                 exp_res = exp_res + 1;
             end else begin
-                while (mant_result[9] == 0 && exp_res > 0) begin
-                    mant_result = mant_result << 1;
+                while (mant_res[9] == 0 && exp_res > 0) begin
+                    mant_res = mant_res << 1;
                     exp_res = exp_res - 1;
                 end
             end
@@ -81,14 +85,15 @@ module FP_ALU_if16bits (
         // =========================
         2'b10: begin
             sign_res = sign_a ^ sign_b;
-            mant_product = mant_a * mant_b;  // 22 bits
+            mant_prod = mant_a * mant_b; // 11x11 = 22 bits
             exp_res = exp_a + exp_b - BIAS;
 
-            if (mant_product[21]) begin
-                mant_result = mant_product[21:11];
+            // Normalización
+            if (mant_prod[21]) begin
+                mant_res = mant_prod[21:11];
                 exp_res = exp_res + 1;
             end else begin
-                mant_result = mant_product[20:10];
+                mant_res = mant_prod[20:10];
             end
         end
 
@@ -98,27 +103,30 @@ module FP_ALU_if16bits (
         2'b11: begin
             sign_res = sign_a ^ sign_b;
             exp_res = exp_a - exp_b + BIAS;
-            mant_result = (mant_a << 10) / mant_b;
 
-            if (mant_result[10]) begin
-                mant_result = mant_result >> 1;
-                exp_res = exp_res + 1;
+            // Escalar antes de dividir para conservar precisión
+            mant_prod = (mant_a << 10) / mant_b;
+
+            if (mant_prod[10]) begin
+                mant_res = mant_prod[10:0];
             end else begin
-                while (mant_result[9] == 0 && exp_res > 0) begin
-                    mant_result = mant_result << 1;
-                    exp_res = exp_res - 1;
-                end
+                mant_res = mant_prod[9:0] << 1;
+                exp_res = exp_res - 1;
             end
         end
 
         default: begin
-            result = 16'b0;
+            exp_res = 0;
+            mant_res = 0;
+            sign_res = 0;
         end
         endcase
 
-        result = {sign_res, exp_res[4:0], mant_result[9:0]};
+        // Empaquetar resultado
+        result = {sign_res, exp_res[4:0], mant_res[9:0]};
     end
 endmodule
+
 
 
 
