@@ -1,10 +1,7 @@
-`timescale 1ns/1ns
-
-
 module FP_ALU_if16bits (
     input  [15:0] op_a, op_b,  
     input  [1:0]  op_code,  
-    output reg [31:0] result
+    output reg [15:0] result
 );
     // Decompose operands
     reg sign_a, sign_b, sign_res;
@@ -76,8 +73,8 @@ module FP_ALU_if16bits (
         sign_b = op_b[15];
         exp_a  = op_a[14:10];
         exp_b  = op_b[14:10];
-        mant_a = {1'b1, op_a[10:0]};
-        mant_b = {1'b1, op_b[10:0]};
+        mant_a = {1'b1, op_a[9:0]};
+        mant_b = {1'b1, op_b[9:0]};
 
         // 2. Defaults
         sign_res = 0;
@@ -173,7 +170,7 @@ module FP_ALU_if16bits (
             end
         endcase
 
-        result = {sign_res, exp_res[7:0], mant_result[22:0]};
+        result = {sign_res, exp_res[4:0], mant_result[9:0]};
     end
 endmodule
 
@@ -186,8 +183,8 @@ module tb_FP_ALU_if16bits;
     reg  [15:0] op_a, op_b;
     reg  [1:0]  op_code;
 
-    // Salidas
-    wire [31:0] result;
+    // Salida
+    wire [15:0] result;
 
     // Instancia del DUT (Device Under Test)
     FP_ALU_if16bits dut (
@@ -197,8 +194,8 @@ module tb_FP_ALU_if16bits;
         .result(result)
     );
 
-    // Tarea para imprimir binario y valor decimal estimado
-    task print_result;
+    // Tarea para imprimir resultados
+    task show_result;
         input [1:0] op_code;
         input [15:0] a;
         input [15:0] b;
@@ -211,10 +208,10 @@ module tb_FP_ALU_if16bits;
                 2'b11: $display("Operacion: DIVISION");
             endcase
             $display("op_a = %h, op_b = %h", a, b);
-            $display("Resultado (IEEE754-32bits) = %h", result);
-            $display("Signo=%b Exponente=%b Mantisa=%b", 
-                      result[31], result[30:23], result[22:0]);
-            $display("------------------------------------------------");
+            $display("Resultado (16 bits IEEE754) = %h", result);
+            $display(" Signo=%b  Exp=%b  Mantisa=%b", 
+                     result[15], result[14:10], result[9:0]);
+            $display("------------------------------------------------\n");
         end
     endtask
 
@@ -231,35 +228,42 @@ module tb_FP_ALU_if16bits;
         // 8.0  = 0x4800
         // ------------------------------------------------
 
-        // ---- Test 1: Suma (1.0 + 2.0 = 3.0) ----
+        // Test 1: 1.0 + 2.0 = 3.0
         op_a = 16'h3C00;  // 1.0
         op_b = 16'h4000;  // 2.0
         op_code = 2'b00;  // Suma
         #10;
-        print_result(op_code, op_a, op_b);
+        show_result(op_code, op_a, op_b);
 
-        // ---- Test 2: Resta (3.0 - 1.0 = 2.0) ----
+        // Test 2: 3.0 - 1.0 = 2.0
         op_a = 16'h4200;  // 3.0
         op_b = 16'h3C00;  // 1.0
         op_code = 2'b01;  // Resta
         #10;
-        print_result(op_code, op_a, op_b);
+        show_result(op_code, op_a, op_b);
 
-        // ---- Test 3: Multiplicación (2.0 × 4.0 = 8.0) ----
+        // Test 3: 2.0 × 4.0 = 8.0
         op_a = 16'h4000;  // 2.0
         op_b = 16'h4400;  // 4.0
-        op_code = 2'b10;  // Multiplicacion
+        op_code = 2'b10;  // Multiplicación
         #10;
-        print_result(op_code, op_a, op_b);
+        show_result(op_code, op_a, op_b);
 
-        // ---- Test 4: División (8.0 ÷ 2.0 = 4.0) ----
+        // Test 4: 8.0 ÷ 2.0 = 4.0
         op_a = 16'h4800;  // 8.0
         op_b = 16'h4000;  // 2.0
-        op_code = 2'b11;  // Division
+        op_code = 2'b11;  // División
         #10;
-        print_result(op_code, op_a, op_b);
+        show_result(op_code, op_a, op_b);
 
-        $display("Simulacion completada correctamente.");
+        // Test 5: 1.5 + 2.5 = 4.0
+        op_a = 16'h3E00;  // 1.5
+        op_b = 16'h4200;  // 2.5
+        op_code = 2'b00;
+        #10;
+        show_result(op_code, op_a, op_b);
+
+        $display("Simulacion completada exitosamente.");
         $finish;
     end
 
