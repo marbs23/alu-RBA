@@ -1,0 +1,303 @@
+module FP_ALU_if (
+    input  [31:0] op_a, op_b,   
+    input  [1:0]  op_code,      
+    input         clk, rst,    
+    input         start,       
+    input         mode_fp,      
+    output reg [31:0] result,   
+    output reg [4:0]  flags,    
+    output reg        valid_out 
+);
+
+    localparam BIAS     = 8'd127;
+    localparam EXP_MIN  = 8'd1;
+    localparam EXP_MAX  = 8'd254;
+
+    // Campos individuales
+    reg sign_a, sign_b, sign_res;
+    reg [7:0] exp_a, exp_b, exp_res;
+    reg [23:0] mant_a, mant_b;40000000
+    reg [24:0] mant_sum;
+    reg [7:0]  exp_diff;
+    
+    reg round_bit, lsb_bit, tie_case, did_round;
+    reg [47:0] product;
+    reg [22:0] frac_final;
+    reg round_bit, lsb_bit, tie_case, did_round;
+    reg overflow, underflow;
+    reg [47:0] mant_div;
+    reg [22:0] frac_final;
+    reg round_bit, lsb_bit, tie_case, did_round;
+    reg overflow, underflow;
+
+    always @(*) begin
+        result     = 32'b0;
+        flags      = 5'b00000;
+        valid_out  = 1'b0;
+
+        sign_a = op_a[31];
+        sign_b = op_b[31];
+        exp_a  = op_a[30:23];
+        exp_b  = op_b[30:23];
+        mant_a = {1'b1, op_a[22:0]};
+        mant_b = {1'b1, op_b[22:0]};
+
+        sign_res = 0;
+        exp_res  = 0;
+        mant_sum = 0;
+
+       
+        case (op_code)
+
+       
+        2'b00, 2'b01: begin   
+
+            if (op_code == 2'b01)
+                sign_b = ~sign_b;  // Resta = invertir signo de B
+
+            // Alinear exponentes
+            if (exp_a > exp_b) begin
+                exp_diff = exp_a - exp_b;
+                mant_b = mant_b >> exp_diff;
+                exp_res = exp_a;
+            end else if (exp_b > exp_a) begin
+                exp_diff = exp_b - exp_a;
+                mant_a = mant_a >> exp_diff;
+                exp_res = exp_b;
+            end else begin
+                exp_res = exp_a;
+            end
+
+            // Suma o resta
+            if (sign_a == sign_b) begin
+                mant_sum = mant_a + mant_b;
+                sign_res = sign_a;
+            end else begin
+                if (mant_a >= mant_b) begin
+                    mant_sum = mant_a - mant_b;
+                    sign_res = sign_a;
+                end else begin
+                    mant_sum = mant_b - mant_a;
+                    sign_res = sign_b;
+                end
+            end
+
+            // Normalización
+            if (mant_sum[24]) begin
+                mant_sum = mant_sum >> 1;
+                exp_res = exp_res + 1;
+            end else begin
+                while (mant_sum[23] == 0 && exp_res > 0) begin
+                    mant_sum = mant_sum << 1;
+                    exp_res  = exp_res - 1;
+                end
+            end
+
+            round_bit = mant_sum[0];
+            lsb_bit   = mant_sum[1];
+            tie_case  = (mant_sum[0] && (mant_sum[0] == 1'b1));
+            did_round = 1'b0;
+
+            if (round_bit) begin
+                if (!tie_case || (tie_case && (lsb_bit == 0))) begin
+                    mant_sum[23:1] = mant_sum[23:1] + 1'b1;
+                    did_round = 1'b1;
+                end
+            end
+
+            flags[2] = (exp_res > EXP_MAX); // overflow
+            flags[1] = (exp_res < EXP_MIN); // underflow
+            flags[0] = did_round;           // inexact
+
+            if (flags[2])
+                result = {sign_res, 8'hFF, 23'd0};
+            else if (flags[1])
+                result = {sign_res, 31'd0};
+            else
+                result = {sign_res, exp_res[7:0], mant_sum[22:0]};
+        end
+
+        
+        2'b10: begin
+            
+
+            sign_res = sign_a ^ sign_b;
+
+            product = mant_a * mant_b;
+
+            if (product[47]) begin
+                product = product >> 1;
+                exp_res = exp_a + exp_b - (BIAS - 1);
+            end else begin
+                exp_res = exp_a + exp_b - BIAS;
+            end
+
+            round_bit = product[23];
+            lsb_bit   = product[24];
+            tie_case  = (product[22:0] == 0);
+            did_round = 1'b0;
+
+            if (round_bit) begin
+                if (!tie_case || (tie_case && (lsb_bit == 0))) begin
+                    product[46:24] = product[46:24] + 1'b1;
+                    did_round = 1'b1;
+                end
+            end
+
+            frac_final = product[46:24];
+
+            overflow  = (exp_res > EXP_MAX);
+            underflow = (exp_res < EXP_MIN);
+
+            flags[2] = overflow;
+            flags[1] = underflow;
+            flags[0] = did_round; 
+
+            if (overflow)
+                result = {sign_res, 8'hFF, 23'd0};
+            else if (underflow)
+                result = {sign_res, 31'd0};
+            else
+                result = {sign_res, exp_res[7:0], frac_final};
+        end
+
+       
+        2'b11: begin
+
+
+            sign_res = sign_a ^ sign_b;
+
+            if ((exp_a == 8'hFF && exp_b == 8'hFF) ||
+                ((exp_a == 8'd0 && mant_a[22:0] == 0) && 
+                 (exp_b == 8'd0 && mant_b[22:0] == 0))) begin
+                result = {1'b0, 8'hFF, 23'h400000}; 
+                flags[4] = 1'b1; 
+            end 
+            else if ((exp_b == 8'd0 && mant_b[22:0] == 0)) begin
+                result = {sign_res, 8'hFF, 23'd0}; 
+                flags[3] = 1'b1;
+            end 
+            else if ((exp_a == 8'd0 && mant_a[22:0] == 0)) begin
+                result = {sign_res, 31'd0}; 
+            end 
+            else begin
+                exp_res = (exp_a - exp_b) + BIAS;
+                mant_div = (mant_a << 23) / mant_b;
+
+                if (!mant_div[46]) begin
+                    mant_div = mant_div << 1;
+                    exp_res  = exp_res - 1;
+                end
+
+                round_bit = mant_div[23];
+                lsb_bit   = mant_div[24];
+                tie_case  = (mant_div[22:0] == 0);
+                did_round = 1'b0;
+
+                if (round_bit) begin
+                    if (!tie_case || (tie_case && (lsb_bit == 0))) begin
+                        mant_div[46:24] = mant_div[46:24] + 1'b1;
+                        did_round = 1'b1;
+                    end
+                end
+
+                frac_final = mant_div[46:24];
+                overflow   = (exp_res > EXP_MAX);
+                underflow  = (exp_res < EXP_MIN);
+
+                flags[2] = overflow;
+                flags[1] = underflow;
+                flags[0] = did_round; 
+
+                if (overflow)
+                    result = {sign_res, 8'hFF, 23'd0}; 
+                else if (underflow)
+                    result = {sign_res, 31'd0};        
+                else
+                    result = {sign_res, exp_res[7:0], frac_final};
+            end
+        end
+
+        default: begin
+            result = 0;
+        end
+        endcase
+
+        valid_out = start ? 1'b1 : 1'b0;
+    end
+endmodule
+
+
+
+/////////////////////////////TESTBENCH///////////////////////////////////////
+`timescale 1ns/1ps
+
+module tb_FP_ALU_if;
+
+    // Entradas
+    reg  [31:0] op_a, op_b;
+    reg  [1:0]  op_code;
+    reg         clk, rst, start, mode_fp;
+
+    // Salidas
+    wire [31:0] result;
+    wire [4:0]  flags;
+    wire        valid_out;
+
+    // Instancia del DUT (Device Under Test)
+    FP_ALU_if dut (
+        .op_a(op_a),
+        .op_b(op_b),
+        .op_code(op_code),
+        .clk(clk),
+        .rst(rst),
+        .start(start),
+        .mode_fp(mode_fp),
+        .result(result),
+        .flags(flags),
+        .valid_out(valid_out)
+    );
+
+    // Generar reloj (cada 5ns cambia)
+    always #5 clk = ~clk;
+
+    // Secuencia de prueba
+    initial begin
+        $dumpfile("fp_alu_if_tb.vcd");
+        $dumpvars(0, tb_FP_ALU_if);
+
+        // Inicialización
+        clk = 0; rst = 0; start = 0; mode_fp = 1; // single precision
+
+        // ---- Test 1: Suma (1.0 + 2.0 = 3.0) ----
+        op_a = 32'h3F800000; // 1.0
+        op_b = 32'h40000000; // 2.0
+        op_code = 2'b00; // Suma
+        start = 1; #10; start = 0;
+        #20;
+
+        // ---- Test 2: Resta (3.0 - 1.0 = 2.0) ----
+        op_a = 32'h40400000; // 3.0
+        op_b = 32'h3F800000; // 1.0
+        op_code = 2'b01; // Resta
+        start = 1; #10; start = 0;
+        #20;
+
+        // ---- Test 3: Multiplicación (2.0 × 4.0 = 8.0) ----
+        op_a = 32'h40000000; // 2.0
+        op_b = 32'h40800000; // 4.0
+        op_code = 2'b10; // Multiplicación
+        start = 1; #10; start = 0;
+        #20;
+
+        // ---- Test 4: División (8.0 ÷ 2.0 = 4.0) ----
+        op_a = 32'h41000000; // 8.0
+        op_b = 32'h40000000; // 2.0
+        op_code = 2'b11; // División
+        start = 1; #10; start = 0;
+        #20;
+
+        $finish;
+    end
+
+endmodule
