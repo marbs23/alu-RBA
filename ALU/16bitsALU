@@ -268,3 +268,115 @@ module tb_FP_ALU_if16bits;
     end
 
 endmodule
+
+`timescale 1ns/1ps
+
+module tb_FP_ALU_if16bits;
+
+    // -------------------------------
+    // Entradas
+    // -------------------------------
+    reg [15:0] op_a;
+    reg [15:0] op_b;
+    reg [1:0]  op_code;
+
+    // -------------------------------
+    // Salidas
+    // -------------------------------
+    wire [15:0] result;
+
+    // -------------------------------
+    // Instancia del DUT
+    // -------------------------------
+    FP_ALU_if16bits dut (
+        .op_a(op_a),
+        .op_b(op_b),
+        .op_code(op_code),
+        .result(result)
+    );
+
+    // -------------------------------
+    // Variables auxiliares
+    // -------------------------------
+    integer i;
+
+    // -------------------------------
+    // Tarea para imprimir resultados
+    // -------------------------------
+    task show_result;
+        input [1:0] op_code;
+        input [15:0] a;
+        input [15:0] b;
+        begin
+            $display("------------------------------------------------");
+            case (op_code)
+                2'b00: $display("Operacion: SUMA");
+                2'b01: $display("Operacion: RESTA");
+                2'b10: $display("Operacion: MULTIPLICACION");
+                2'b11: $display("Operacion: DIVISION");
+            endcase
+            $display("op_a = %h, op_b = %h", a, b);
+            $display("Resultado = %h", result);
+            $display(" Signo = %b, Exponente = %b, Mantisa = %b", 
+                      result[15], result[14:10], result[9:0]);
+            $display("------------------------------------------------\n");
+        end
+    endtask
+
+    // -------------------------------
+    // Secuencia de prueba
+    // -------------------------------
+    initial begin
+        $dumpfile("fp_alu_if16bits_tb.vcd");
+        $dumpvars(0, tb_FP_ALU_if16bits);
+
+        // --------------------------------------------
+        // Ejemplos Half-Precision (IEEE 754 16 bits)
+        // --------------------------------------------
+        // 1.0  = 0x3C00
+        // 2.0  = 0x4000
+        // 3.0  = 0x4200
+        // 4.0  = 0x4400
+        // 8.0  = 0x4800
+        // --------------------------------------------
+
+        // ---- Test 1: 1.0 + 2.0 = 3.0 ----
+        op_a = 16'h3C00;  // 1.0
+        op_b = 16'h4000;  // 2.0
+        op_code = 2'b00;  // SUMA
+        #10;
+        show_result(op_code, op_a, op_b);
+
+        // ---- Test 2: 3.0 - 1.0 = 2.0 ----
+        op_a = 16'h4200;  // 3.0
+        op_b = 16'h3C00;  // 1.0
+        op_code = 2'b01;  // RESTA
+        #10;
+        show_result(op_code, op_a, op_b);
+
+        // ---- Test 3: 2.0 * 4.0 = 8.0 ----
+        op_a = 16'h4000;  // 2.0
+        op_b = 16'h4400;  // 4.0
+        op_code = 2'b10;  // MULTIPLICACION
+        #10;
+        show_result(op_code, op_a, op_b);
+
+        // ---- Test 4: 8.0 / 2.0 = 4.0 ----
+        op_a = 16'h4800;  // 8.0
+        op_b = 16'h4000;  // 2.0
+        op_code = 2'b11;  // DIVISION
+        #10;
+        show_result(op_code, op_a, op_b);
+
+        // ---- Test 5: 1.5 + 2.5 = 4.0 ----
+        op_a = 16'h3E00;  // 1.5
+        op_b = 16'h4200;  // 2.5
+        op_code = 2'b00;  // SUMA
+        #10;
+        show_result(op_code, op_a, op_b);
+
+        $display("Simulacion completada correctamente.");
+        $finish;
+    end
+
+endmodule
