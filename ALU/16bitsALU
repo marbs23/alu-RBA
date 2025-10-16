@@ -1,0 +1,266 @@
+`timescale 1ns/1ns
+
+
+module FP_ALU_if16bits (
+    input  [15:0] op_a, op_b,  
+    input  [1:0]  op_code,  
+    output reg [31:0] result
+);
+    // Decompose operands
+    reg sign_a, sign_b, sign_res;
+    reg [4:0] exp_a, exp_b, exp_res;
+    reg [9:0] mant_a, mant_b;
+    reg [10:0] mant_result;
+    reg [4:0] exp_diff;
+    reg carry;
+
+    /*
+    function is_nan(input [31:0] v);
+        begin is_nan = (v[30:23] == 8'hFF) && (v[22:0] != 0); end
+    endfunction
+    function is_inf(input [31:0] v);
+        begin is_inf = (v[30:23] == 8'hFF) && (v[22:0] == 0); end
+    endfunction
+    function is_zero(input [31:0] v);
+        begin is_zero = ((v & 32'h7FFFFFFF) == 0); end
+    endfunction
+    function is_denorm(input [31:0] v);
+        begin is_denorm = (v[30:23] == 8'd0) && (v[22:0] != 0); end
+    endfunction
+    function [31:0] pack_norm;
+        input sign;
+        input signed [9:0] expo;    // allow range beyond 8 bits
+        input [23:0]  mant24;       // leading 1 for normalized, or denorm raw left aligned
+        reg [23:0] shifted;
+        integer shift_amt;
+        begin
+            if (expo >= 255) begin
+                // overflow -> Inf
+                pack_norm = {sign, 8'hFF, 23'd0};
+            end else if (expo <= 0) begin
+                // produce denorm or zero: shift mantissa right by (1-expo)
+                if (expo < -23) begin
+                    pack_norm = {sign, 8'd0, 23'd0};
+                end else begin
+                    shift_amt = 1 - expo;
+                    shifted = mant24 >> shift_amt;
+                    pack_norm = {sign, 8'd0, shifted[22:0]};
+                end
+            end else begin
+                pack_norm = {sign, expo[7:0], mant24[22:0]};
+            end
+        end
+    endfunction
+
+
+    function [1:0] round_decide;
+        // returns {inexact, increment}
+        input sign;
+        input [2:0] grs;
+        begin
+            round_decide = 2'b00;
+            if (grs != 3'b000) 
+            round_decide[1] = 1; // inexact
+            // RN-even
+            if (grs[2] && (grs[1] | grs[0] | 1'b0)) begin
+                round_decide[0] = 1;
+            end
+        end
+    endfunction
+
+    */
+
+    always @(*) begin
+        // 1. Decompose inputs
+        sign_a = op_a[15];
+        sign_b = op_b[15];
+        exp_a  = op_a[14:10];
+        exp_b  = op_b[14:10];
+        mant_a = {1'b1, op_a[10:0]};
+        mant_b = {1'b1, op_b[10:0]};
+
+        // 2. Defaults
+        sign_res = 0;
+        exp_res  = 0;
+        mant_result = 0;
+        carry    = 0;
+
+        
+        // 3. Decode operation
+        casex (op_code)
+            2'b0?: 
+            begin   // ADD / SUB
+                // If subtraction, flip sign_b
+
+                if (op_code == 2'b01)
+                    sign_b = ~sign_b;
+
+                case ({(exp_a > exp_b), (exp_a < exp_b)})
+                    2'b10: 
+                    begin 
+                        exp_diff = exp_a - exp_b;
+                        mant_b = mant_b >> exp_diff;
+                        exp_res = exp_a;
+                    end
+                    2'b01: begin 
+                        exp_diff = exp_b - exp_a;
+                        mant_a = mant_a >> exp_diff;
+                        exp_res = exp_b;
+                    end
+                    default: begin 
+                        exp_res = exp_a;
+                    end
+                endcase
+
+                casex ({sign_a, sign_b})
+                    2'b0?: begin
+                        mant_result = mant_a + mant_b;
+                        sign_res = sign_a;  // same sign
+                    end
+                    2'b01: begin
+                        if (mant_a >= mant_b) begin
+                            mant_result = mant_a - mant_b;
+                            sign_res = 1'b0; // A positive
+                        end else begin
+                            mant_result = mant_b - mant_a;
+                            sign_res = 1'b1; // B negative
+                        end
+                    end
+                    2'b10: begin
+                        if (mant_a >= mant_b) begin
+                            mant_result = mant_a - mant_b;
+                            sign_res = 1'b1; // A negative
+                        end else begin
+                            mant_result = mant_b - mant_a;
+                            sign_res = 1'b0; // B positive
+                        end
+                    end
+                endcase
+
+                if (mant_result[24]) begin
+                    mant_result = mant_result >> 1;
+                    exp_res = exp_res + 1;
+                end else begin
+                    while (mant_result[23] == 0 && exp_res > 0) begin
+                        mant_result = mant_result << 1;
+                        exp_res  = exp_res - 1;
+                    end
+                end
+            end
+            2'b10: 
+            begin
+
+                sign_res = sign_a ^ sign_b; // Result sign
+                exp_res = exp_a + exp_b - 127; // Subtract bias
+                mant_result = (mant_a * mant_b) >> 23; // Normalize
+
+            end
+
+            2'b11: 
+
+            begin
+                sign_res = sign_a ^ sign_b; // Result sign
+                exp_res = exp_a - exp_b + 127; // Add bias
+                mant_result = (mant_a << 23) / mant_b; // Normalize
+
+            end
+
+
+            default: begin
+                sign_res = 0;
+                exp_res  = 0;
+                mant_result = 0;
+            end
+        endcase
+
+        result = {sign_res, exp_res[7:0], mant_result[22:0]};
+    end
+endmodule
+
+
+`timescale 1ns / 1ps
+
+module tb_FP_ALU_if16bits;
+
+    // Entradas
+    reg  [15:0] op_a, op_b;
+    reg  [1:0]  op_code;
+
+    // Salidas
+    wire [31:0] result;
+
+    // Instancia del DUT (Device Under Test)
+    FP_ALU_if16bits dut (
+        .op_a(op_a),
+        .op_b(op_b),
+        .op_code(op_code),
+        .result(result)
+    );
+
+    // Tarea para imprimir binario y valor decimal estimado
+    task print_result;
+        input [1:0] op_code;
+        input [15:0] a;
+        input [15:0] b;
+        begin
+            $display("------------------------------------------------");
+            case (op_code)
+                2'b00: $display("Operacion: SUMA");
+                2'b01: $display("Operacion: RESTA");
+                2'b10: $display("Operacion: MULTIPLICACION");
+                2'b11: $display("Operacion: DIVISION");
+            endcase
+            $display("op_a = %h, op_b = %h", a, b);
+            $display("Resultado (IEEE754-32bits) = %h", result);
+            $display("Signo=%b Exponente=%b Mantisa=%b", 
+                      result[31], result[30:23], result[22:0]);
+            $display("------------------------------------------------");
+        end
+    endtask
+
+    initial begin
+        $dumpfile("FP_ALU_if16bits_tb.vcd");
+        $dumpvars(0, tb_FP_ALU_if16bits);
+
+        // ------------------------------------------------
+        // Half precision ejemplos (IEEE-754 binary16):
+        // 1.0  = 0x3C00
+        // 2.0  = 0x4000
+        // 3.0  = 0x4200
+        // 4.0  = 0x4400
+        // 8.0  = 0x4800
+        // ------------------------------------------------
+
+        // ---- Test 1: Suma (1.0 + 2.0 = 3.0) ----
+        op_a = 16'h3C00;  // 1.0
+        op_b = 16'h4000;  // 2.0
+        op_code = 2'b00;  // Suma
+        #10;
+        print_result(op_code, op_a, op_b);
+
+        // ---- Test 2: Resta (3.0 - 1.0 = 2.0) ----
+        op_a = 16'h4200;  // 3.0
+        op_b = 16'h3C00;  // 1.0
+        op_code = 2'b01;  // Resta
+        #10;
+        print_result(op_code, op_a, op_b);
+
+        // ---- Test 3: Multiplicación (2.0 × 4.0 = 8.0) ----
+        op_a = 16'h4000;  // 2.0
+        op_b = 16'h4400;  // 4.0
+        op_code = 2'b10;  // Multiplicacion
+        #10;
+        print_result(op_code, op_a, op_b);
+
+        // ---- Test 4: División (8.0 ÷ 2.0 = 4.0) ----
+        op_a = 16'h4800;  // 8.0
+        op_b = 16'h4000;  // 2.0
+        op_code = 2'b11;  // Division
+        #10;
+        print_result(op_code, op_a, op_b);
+
+        $display("Simulacion completada correctamente.");
+        $finish;
+    end
+
+endmodule
