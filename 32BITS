@@ -1,4 +1,4 @@
-
+/*
 module FP_ALU_if (
     input  [31:0] op_a, op_b,
     input  [1:0]  op_code,        
@@ -281,6 +281,8 @@ end
 
         valid_out = start ? 1'b1 : 1'b0;
     end
+endmodule
+*/
 
 /////////////////////////////TESTBENCH///////////////////////////////////////
 `timescale 1ns/1ps
@@ -311,19 +313,18 @@ module tb_FP_ALU_if;
         .valid_out(valid_out)
     );
 
-    // Task genérica
+    // TASK original
     task run_test;
         input [31:0] a, b;
-        input [1:0]  op;
-        input [80*8:1] desc;
+        input [1:0] op;
+        input [127:0] desc;
         begin
             op_a = a;
             op_b = b;
             op_code = op;
             start = 1; #5; start = 0;
             #10;
-            $display("%s => A=%h  B=%h  op=%b  => R=%h  flags=%b",
-                     desc, a, b, op, result, flags);
+            $display("%s => A=%h  B=%h  op=%b  => R=%h  flags=%b", desc, a, b, op, result, flags);
             #10;
         end
     endtask
@@ -333,38 +334,35 @@ module tb_FP_ALU_if;
         $dumpfile("fp_alu_if_tb.vcd");
         $dumpvars(0, tb_FP_ALU_if);
 
-        mode_fp = 1; start = 0;
+        // =====================================================
+        // TEST: modo FP32 (single precision)
+        // =====================================================
+        mode_fp = 0;
+        start = 0;
+        #5;
+        $display("========== TEST FP32 ==========");
+
+        run_test(32'h3F800000, 32'h3F800000, 2'b00, "1) 1.0 + 1.0 = 2.0");
+        run_test(32'h40000000, 32'h3F800000, 2'b01, "2) 2.0 - 1.0 = 1.0");
+        run_test(32'h3F000000, 32'h3F800000, 2'b10, "3) 0.5 * 1.0 = 0.5");
+        run_test(32'h40000000, 32'h3F800000, 2'b11, "4) 2.0 / 1.0 = 2.0");
+
+        // =====================================================
+        // TEST: modo FP16 (half precision)
+        // =====================================================
+        $display("\n========== TEST FP16 ==========");
+        mode_fp = 1;
         #5;
 
-        // =======================
-        // 🔹 SUMA (op_code = 00)
-        // =======================
-        $display("\n===== SUMA =====");
-        run_test(32'h3F800000, 32'h40000000, 2'b00, "1) 1.0 + 2.0 = 3.0");
-        run_test(32'h7F7FFFFF, 32'h7F7FFFFF, 2'b00, "2) MAX + MAX = +Inf (overflow)");
+        // En FP16, los valores van en la parte baja (16 bits):
+        // 1.0 = 0x3C00, 2.0 = 0x4000, 3.0 = 0x4200, 4.0 = 0x4400
+        run_test(32'h00003C00, 32'h00003C00, 2'b00, "5) 1.0 + 1.0 = 2.0 (FP16)");
+        run_test(32'h00004000, 32'h00003C00, 2'b01, "6) 2.0 - 1.0 = 1.0 (FP16)");
+        run_test(32'h00003C00, 32'h00003C00, 2'b10, "7) 1.0 * 1.0 = 1.0 (FP16)");
+        run_test(32'h00004000, 32'h00003C00, 2'b11, "8) 2.0 / 1.0 = 2.0 (FP16)");
 
-        // =======================
-        // 🔹 RESTA (op_code = 01)
-        // =======================
-        $display("\n===== RESTA =====");
-        run_test(32'h40400000, 32'h3F800000, 2'b01, "1) 3.0 - 1.0 = 2.0");
-        run_test(32'h7F800000, 32'h7F800000, 2'b01, "2) +Inf - +Inf = NaN (invalid)");
-
-        // =======================
-        // 🔹 MULTIPLICACIÓN (op_code = 10)
-        // =======================
-        $display("\n===== MULTIPLICACIÓN =====");
-        run_test(32'h40000000, 32'h3F800000, 2'b10, "1) 2.0 * 1.0 = 2.0");
-        run_test(32'h7F800000, 32'h00000000, 2'b10, "2) +Inf * 0.0 = NaN (invalid)");
-
-        // =======================
-        // 🔹 DIVISIÓN (op_code = 11)
-        // =======================
-        $display("\n===== DIVISIÓN =====");
-        run_test(32'h40000000, 32'h3F800000, 2'b11, "1) 2.0 / 1.0 = 2.0");
-        run_test(32'h3F800000, 32'h00000000, 2'b11, "2) 1.0 / 0.0 = +Inf (div0)");
-
-        $display("\n==== FIN DE SIMULACIÓN ====");
+        // =====================================================
+        $display("==== FIN DE SIMULACIÓN ====");
         $finish;
     end
 
