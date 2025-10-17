@@ -281,9 +281,6 @@ end
 
         valid_out = start ? 1'b1 : 1'b0;
     end
-endmodule
-
-
 
 /////////////////////////////TESTBENCH///////////////////////////////////////
 `timescale 1ns/1ps
