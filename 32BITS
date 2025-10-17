@@ -4,7 +4,7 @@ module FP_ALU_if (
     input  [1:0]  op_code,        
     input         clk, rst,
     input         start,
-    input         mode_fp,        
+    input         mode_fp,       
     output reg [31:0] result,
     output reg [4:0]  flags,      
     output reg        valid_out
@@ -16,7 +16,7 @@ module FP_ALU_if (
 
     reg sign_a, sign_b, sign_res;
     reg [7:0] exp_a, exp_b, exp_res;
-    reg [23:0] mant_a, mant_b;     
+  reg [23:0] mant_a, mant_b;      
     reg [24:0] mant_sum;
     reg [7:0]  exp_diff;
 
@@ -24,7 +24,7 @@ module FP_ALU_if (
 
     always @(*) begin
         result     = 32'b0;
-        flags      = 5'b00000;   
+        flags      = 5'b00000;     
         valid_out  = 1'b0;
 
         sign_a = op_a[31];
@@ -34,15 +34,16 @@ module FP_ALU_if (
         mant_a = (exp_a==8'd0) ? {1'b0, op_a[22:0]} : {1'b1, op_a[22:0]};
         mant_b = (exp_b==8'd0) ? {1'b0, op_b[22:0]} : {1'b1, op_b[22:0]};
 
+        // clases
         a_is_nan  = (exp_a==8'hFF) && (op_a[22:0]!=0);
-      b_is_nan  = (exp_b==8'hFF) && (op_b[22:0]!=0);
+        b_is_nan  = (exp_b==8'hFF) && (op_b[22:0]!=0);
         a_is_inf  = (exp_a==8'hFF) && (op_a[22:0]==0);
         b_is_inf  = (exp_b==8'hFF) && (op_b[22:0]==0);
         a_is_zero = (exp_a==8'd0)  && (op_a[22:0]==0);
         b_is_zero = (exp_b==8'd0)  && (op_b[22:0]==0);
 
         case (op_code)
- 
+      
         2'b00, 2'b01: begin
             reg guard_bit, lsb_bit, did_round;
 
@@ -105,8 +106,9 @@ module FP_ALU_if (
                     did_round = 1'b1;
                 end
 
-                flags[2] = (exp_res > EXP_MAX); 
-                flags[1] = (exp_res < EXP_MIN); 
+                // flags
+                flags[2] = (exp_res > EXP_MAX); // overflow
+                flags[1] = (exp_res < EXP_MIN); // underflow
                 flags[0] = did_round | guard_bit;
 
                 if (flags[2])
@@ -118,7 +120,7 @@ module FP_ALU_if (
             end
         end
 
-  
+     
         2'b10: begin
             reg [47:0] product;
             reg [22:0] frac_mul;
@@ -131,7 +133,7 @@ module FP_ALU_if (
                 result = {1'b0, 8'hFF, 23'h400000};
             end
             else if ((a_is_inf && b_is_zero) || (b_is_inf && a_is_zero)) begin
-                result   = {1'b0, 8'hFF, 23'h400000}; 
+                result   = {1'b0, 8'hFF, 23'h400000}; // invalid
                 flags[4] = 1'b1;
             end
             else if (a_is_inf || b_is_inf) begin
@@ -146,6 +148,7 @@ module FP_ALU_if (
                 sign_res = sign_a ^ sign_b;
                 product  = mant_a * mant_b;
 
+                // Normalización: queremos el 1 en bit 46
                 if (product[47]) begin
                     product = product >> 1;
                     exp_res = exp_a + exp_b - (BIAS - 1);
@@ -153,14 +156,17 @@ module FP_ALU_if (
                     exp_res = exp_a + exp_b - BIAS;
                 end
 
+                // Fracción = [45:23], RNE con guard/sticky/lsb
                 frac_mul   = product[45:23];
                 lsb_bit    = product[23];
                 guard_bit  = product[22];
                 sticky_bit = |product[21:0];
                 round_inc  = guard_bit & (sticky_bit | lsb_bit);
 
+                // Redondeo
                 frac_round = {1'b0, frac_mul} + round_inc;
 
+                // Carry tras redondeo → renormalizar
                 if (frac_round[23]) begin
                     frac_round = frac_round >> 1;
                     exp_res    = exp_res + 1;
@@ -170,7 +176,7 @@ module FP_ALU_if (
                 underflow = (exp_res < EXP_MIN);
                 flags[2]  = overflow;
                 flags[1]  = underflow;
-                flags[0]  = round_inc; 
+                flags[0]  = round_inc; // inexact si hubo round
 
                 if (overflow)
                     result = {sign_res, 8'hFF, 23'd0};
@@ -182,7 +188,7 @@ module FP_ALU_if (
         end
 
 2'b11: begin
-    reg [47:0] q;                
+    reg [47:0] q;                // cociente extendido
     reg [47:0] div_numer;
     reg [47:0] remainder;
     reg [22:0] frac_div;
@@ -202,7 +208,7 @@ module FP_ALU_if (
     end
     else if (b_is_zero && !a_is_zero) begin
         result   = {sign_res, 8'hFF, 23'd0};
-        flags[3] = 1'b1; 
+        flags[3] = 1'b1; // div0
     end
     else if (a_is_zero && !b_is_zero) begin
         result = {sign_res, 31'd0};
@@ -214,20 +220,22 @@ module FP_ALU_if (
         result = {sign_res, 31'd0};
     end
     else begin
-      
-        div_numer = {mant_a, 24'b0}; 
+       
+        div_numer = {mant_a, 24'b0}; // ma << 24
         q         = div_numer / mant_b;
         remainder = div_numer % mant_b;
 
+        // Exponente base (sin -24)
         exp_res = (exp_a - exp_b) + BIAS;
 
-        
+       
         if (q[25]) begin
-            q      = q >> 1;     
+            q      = q >> 1;      // lleva el '1' al bit24
             exp_res = exp_res + 1;
         end
         else if (!q[24]) begin
-           
+            // desplazamos una vez; para casos extremos podrías laquear un for,
+            // pero con entradas normales de single será a lo sumo 1 paso aquí
             q       = q << 1;
             exp_res = exp_res - 1;
         end
@@ -240,6 +248,7 @@ module FP_ALU_if (
         round_inc = guard_bit & (sticky_bit | lsb_bit);
         frac_round = {1'b0, frac_div} + round_inc;
 
+        // Carry en redondeo → renormalizar
         if (frac_round[23]) begin
             frac_round = frac_round >> 1;
             exp_res    = exp_res + 1;
@@ -249,12 +258,13 @@ module FP_ALU_if (
         underflow = (exp_res < EXP_MIN);
         flags[2]  = overflow;
         flags[1]  = underflow;
-        flags[0]  = guard_bit | sticky_bit; 
+        flags[0]  = guard_bit | sticky_bit; // inexact
 
         if (overflow) begin
             result = {sign_res, 8'hFF, 23'd0};
         end
         else if (underflow) begin
+            // (Para underflow gradual deberías emitir subnormal + redondeo)
             result = {sign_res, 31'd0};
         end
         else begin
