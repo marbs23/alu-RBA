@@ -498,3 +498,140 @@ module tb_FP_ALU_if_FP32;
     end
 
 endmodule
+
+
+
+
+`timescale 1ns/1ps
+
+module tb_top_FP_ALU_Basys3;
+
+    // === Entradas ===
+    reg clk;
+    reg rst;
+    reg [15:0] sw;
+    reg btnC, btnR, btnU;
+
+    // === Salidas ===
+    wire [15:0] led;
+
+    // === Instancia del DUT ===
+    top_FP_ALU_Basys3 dut (
+        .clk(clk),
+        .rst(rst),
+        .sw(sw),
+        .btnC(btnC),
+        .btnR(btnR),
+        .btnU(btnU),
+        .led(led)
+    );
+
+    // === Generador de reloj (100 MHz simulado) ===
+    always #5 clk = ~clk;  // periodo = 10ns → 100 MHz
+
+    // === Acelerar la simulación ===
+    // (reemplaza divisor de 25M por 10)
+    defparam dut.div.DIV = 10;
+
+    // === Tasks para simular botones ===
+    task pulse_btnC;
+        begin
+            btnC = 1;
+            #200;
+            btnC = 0;
+            #800;
+        end
+    endtask
+
+    task pulse_btnR;
+        begin
+            btnR = 1;
+            #200;
+            btnR = 0;
+            #800;
+        end
+    endtask
+
+    task pulse_btnU;
+        begin
+            btnU = 1;
+            #200;
+            btnU = 0;
+            #800;
+        end
+    endtask
+
+    wire [2:0] state      = dut.state;
+    wire [31:0] op_a      = dut.op_a;
+    wire [31:0] op_b      = dut.op_b;
+    wire [1:0] op_code    = dut.op_code;
+    wire [31:0] result    = dut.result;
+    wire [4:0] flags      = dut.flags;
+    wire valid_out        = dut.valid_out;
+    wire slow_clk         = dut.slow_clk;
+
+    // === Monitoreo continuo en consola ===
+    initial begin
+        $display("\n=== SIMULACION TOP_FP_ALU_BASYS3 ===");
+        $display("time\tstate\tslow_clk\top_code\tvalid_out\tled\tresult\tflags");
+        $monitor("%0t\t%0d\t%b\t%b\t%b\t%h\t%h\t%b",
+                 $time, state, slow_clk, op_code, valid_out, led, result, flags);
+    end
+
+    // === Secuencia de simulación ===
+    initial begin
+        clk = 0;
+        rst = 1;
+        btnC = 0;
+        btnR = 0;
+        btnU = 0;
+        sw = 0;
+        #1000;
+
+        rst = 0;
+        #1000;
+
+        // --- Cargar A[15:0] ---
+     sw = 16'h3C00;   // 1.0 FP16
+#500;
+pulse_btnC;
+
+// --- Cargar A[31:16] ---
+sw = 16'h0000;
+#500;
+pulse_btnC;
+
+// --- Cargar B[15:0] ---
+sw = 16'h4000;   // 2.0 FP16
+#500;
+pulse_btnC;
+
+// --- Cargar B[31:16] ---
+sw = 16'h0000;
+#500;
+pulse_btnC;
+
+// --- Cargar op_code ---
+#1000;            // ESPERA adicional
+sw = 16'h0003;    // división
+pulse_btnC;
+
+        // Esperar a que FSM llegue a S6 (resultado listo)
+        #3000;
+
+        // Mostrar parte alta
+        pulse_btnU;
+        #2000;
+        // Mostrar parte baja
+        pulse_btnU;
+        #2000;
+
+        // Reiniciar FSM
+        pulse_btnR;
+
+        #3000;
+        $display("\n=== FIN DE SIMULACION ===");
+        $finish;
+    end
+
+endmodule
