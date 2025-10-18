@@ -1,0 +1,219 @@
+// =====================================================
+// 1. Divisor de reloj (5 segundos aprox)
+// =====================================================
+module clk_divider #(parameter DIV = 250_000_000)(
+    input clk, rst,
+    output reg slow_clk
+);
+    reg [31:0] counter = 0;
+    always @(posedge clk or posedge rst) begin
+        if (rst) begin
+            counter <= 0;
+            slow_clk <= 0;
+        end else begin
+            if (counter >= DIV) begin
+                counter <= 0;
+                slow_clk <= ~slow_clk;
+            end else begin
+                counter <= counter + 1;
+            end
+        end
+    end
+endmodule
+
+// =====================================================
+// 2. FSM de control (separada en registro / lógica siguiente estado / lógica de salida)
+// =====================================================
+module control_FSM(
+    input clk, rst, btnC, btnR, valid_out,
+    output reg [2:0] state,
+    output reg start
+);
+    // Estados
+    localparam S0=3'd0, S1=3'd1, S2=3'd2, S3=3'd3, S4=3'd4, S5=3'd5, S6=3'd6;
+
+    reg [2:0] next_state;
+
+    // Registro de estado
+    always @(posedge clk or posedge rst) begin
+        if (rst)
+            state <= S0;
+        else
+            state <= next_state;
+    end
+
+    // Lógica de siguiente estado
+    always @(*) begin
+        next_state = state;
+        case (state)
+            S0: if (btnC) next_state = S1;
+            S1: if (btnC) next_state = S2;
+            S2: if (btnC) next_state = S3;
+            S3: if (btnC) next_state = S4;
+            S4: if (btnC) next_state = S5;
+            S5: if (valid_out) next_state = S6;
+            S6: if (btnR) next_state = S0;
+        endcase
+    end
+
+    // Lógica de salida
+    always @(*) begin
+        start = 0;
+        if (state == S4 && btnC)
+            start = 1;
+    end
+endmodule
+
+// =====================================================
+// 3. Top principal (Basys3 integration)
+// =====================================================
+module top_FP_ALU_Basys3(
+    input clk,
+    input btnR,          // este es tu único botón de reset
+    input [15:0] sw,
+    input btnC,          // confirmar / avanzar FSM
+    input btnU,          // mostrar flags
+    output [15:0] led
+);
+    // Clock lento (5 segundos)
+    wire slow_clk;
+    clk_divider #(250_000_000) div(clk, btnR, slow_clk);
+
+    // Señales FSM
+    wire [2:0] state;
+    wire start;
+    wire valid_out;
+
+    // Internos
+    reg [31:0] op_a, op_b;
+    reg [1:0] op_code;
+    wire [31:0] result;
+    wire [4:0] flags;
+
+    // FSM de control
+    control_FSM fsm(
+        .clk(slow_clk),
+        .rst(btnR),       // ← usa directamente btnR
+        .btnC(btnC),
+        .btnR(btnR),
+        .valid_out(valid_out),
+        .state(state),
+        .start(start)
+    );
+
+    // Carga de operandos
+    always @(posedge slow_clk or posedge btnR) begin
+        if (btnR) begin
+            op_a <= 0;
+            op_b <= 0;
+            op_code <= 0;
+        end else begin
+            case (state)
+                3'd0: if (btnC) op_a[15:0]  <= sw;
+                3'd1: if (btnC) op_a[31:16] <= sw;
+                3'd2: if (btnC) op_b[15:0]  <= sw;
+                3'd3: if (btnC) op_b[31:16] <= sw;
+                3'd4: if (btnC) op_code     <= sw[1:0];
+            endcase
+        end
+    end
+
+    // ALU
+    FP_ALU_if alu(
+        .op_a(op_a),
+        .op_b(op_b),
+        .op_code(op_code),
+        .clk(slow_clk),
+        .rst(btnR),
+        .start(start),
+        .mode_fp(1'b1),
+        .result(result),
+        .flags(flags),
+        .valid_out(valid_out)
+    );
+
+    // Botón U para alternar flags
+    reg btnU_sync0, btnU_sync1, show_flags;
+    always @(posedge slow_clk or posedge btnR) begin
+        if (btnR) begin
+            btnU_sync0 <= 0;
+            btnU_sync1 <= 0;
+            show_flags <= 0;
+        end else begin
+            btnU_sync0 <= btnU;
+            btnU_sync1 <= btnU_sync0;
+            if (btnU_sync0 & ~btnU_sync1)
+                show_flags <= ~show_flags;
+        end
+    end
+
+    // Mostrar resultado o flags
+    assign led = (show_flags) ? {11'b0, flags} : result[15:0];
+endmodule
+
+## ================================
+##  CLOCK
+## ================================
+set_property PACKAGE_PIN W5 [get_ports clk]
+set_property IOSTANDARD LVCMOS33 [get_ports clk]
+create_clock -add -name sys_clk_pin -period 10.00 -waveform {0 5} [get_ports clk]
+
+
+## ================================
+##  SWITCHES (sw[15:0]) - ingreso de operandos y opcode
+## ================================
+set_property PACKAGE_PIN V17 [get_ports {sw[0]}]
+set_property PACKAGE_PIN V16 [get_ports {sw[1]}]
+set_property PACKAGE_PIN W16 [get_ports {sw[2]}]
+set_property PACKAGE_PIN W17 [get_ports {sw[3]}]
+set_property PACKAGE_PIN W15 [get_ports {sw[4]}]
+set_property PACKAGE_PIN V15 [get_ports {sw[5]}]
+set_property PACKAGE_PIN W14 [get_ports {sw[6]}]
+set_property PACKAGE_PIN W13 [get_ports {sw[7]}]
+set_property PACKAGE_PIN V2  [get_ports {sw[8]}]
+set_property PACKAGE_PIN T3  [get_ports {sw[9]}]
+set_property PACKAGE_PIN T2  [get_ports {sw[10]}]
+set_property PACKAGE_PIN R3  [get_ports {sw[11]}]
+set_property PACKAGE_PIN W2  [get_ports {sw[12]}]
+set_property PACKAGE_PIN U1  [get_ports {sw[13]}]
+set_property PACKAGE_PIN T1  [get_ports {sw[14]}]
+set_property PACKAGE_PIN R2  [get_ports {sw[15]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {sw[*]}]
+
+
+## ================================
+##  LEDS (led[15:0]) - resultado o flags
+## ================================
+set_property PACKAGE_PIN U16 [get_ports {led[0]}]
+set_property PACKAGE_PIN E19 [get_ports {led[1]}]
+set_property PACKAGE_PIN U19 [get_ports {led[2]}]
+set_property PACKAGE_PIN V19 [get_ports {led[3]}]
+set_property PACKAGE_PIN W18 [get_ports {led[4]}]
+set_property PACKAGE_PIN U15 [get_ports {led[5]}]
+set_property PACKAGE_PIN U14 [get_ports {led[6]}]
+set_property PACKAGE_PIN V14 [get_ports {led[7]}]
+set_property PACKAGE_PIN V13 [get_ports {led[8]}]
+set_property PACKAGE_PIN V3  [get_ports {led[9]}]
+set_property PACKAGE_PIN W3  [get_ports {led[10]}]
+set_property PACKAGE_PIN U3  [get_ports {led[11]}]
+set_property PACKAGE_PIN P3  [get_ports {led[12]}]
+set_property PACKAGE_PIN N3  [get_ports {led[13]}]
+set_property PACKAGE_PIN P1  [get_ports {led[14]}]
+set_property PACKAGE_PIN L1  [get_ports {led[15]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {led[*]}]
+
+
+## ================================
+##  BUTTONS
+## ================================
+# BTN_CENTER → confirmar / avanzar FSM
+set_property PACKAGE_PIN U18 [get_ports btnC]
+set_property IOSTANDARD LVCMOS33 [get_ports btnC]
+
+# BTN_UP → alternar entre mostrar resultado o flags
+set_property PACKAGE_PIN T18 [get_ports btnU]
+set_property IOSTANDARD LVCMOS33 [get_ports btnU]
+
+# BTN_RIGHT → reset global del sistema
+set_property PACKAGE_PIN T17 [get_ports btnR]
+set_property IOSTANDARD LVCMOS33 [get_ports btnR]
