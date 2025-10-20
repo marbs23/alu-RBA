@@ -1,3 +1,5 @@
+Código completo:
+
 // =====================================================
 // 1. Divisor de reloj (2 segundos aprox)
 // =====================================================
@@ -27,15 +29,15 @@ endmodule
 // =====================================================
 module clk_display(
     input slow_clk,
-    output reg [6:0] seg,  // segmentos (a–g)
+    output reg [6:0] seg,  // segmentos (a-g)
     output reg [3:0] an    // ánodos del display
 );
     always @(*) begin
         an = 4'b1110; // usar solo el dígito más a la derecha
         if (slow_clk)
-            seg = 7'b1111001; // “1”
+            seg = 7'b1111001; // "1"
         else
-            seg = 7'b0000001; // “0”
+            seg = 7'b0000001; // "0"
     end
 endmodule
 
@@ -48,7 +50,7 @@ module control_FSM(
     output reg [2:0] state,
     output reg start
 );
-    localparam S0=3'd0, S1=3'd1, S2=3'd2, S3=3'd3, S4=3'd4, S5=3'd5, S6=3'd6;
+    localparam S0=3'd0, S1=3'd1, S2=3'd2, S3=3'd3, S4=3'd4, S5=3'd5, S6=3'd6,S7=3'd7;
     reg [2:0] next_state;
 
     always @(posedge clk or posedge rst)
@@ -63,8 +65,9 @@ module control_FSM(
             S2: if (btnC) next_state = S3;
             S3: if (btnC) next_state = S4;
             S4: if (btnC) next_state = S5;
-            S5: if (valid_out) next_state = S6;
-            S6: if (btnR) next_state = S0;
+            S5: if (btnC) next_state = S6;
+            S6: if (btnC) next_state = S7;
+            S7: if (btnR) next_state = S0;
         endcase
     end
 
@@ -82,8 +85,9 @@ module top_FP_ALU_Basys3(
     input btnR,          // reset global
     input [15:0] sw,     // switches de entrada
     input btnC,          // confirmar / avanzar FSM
-    input btnU,          // mostrar flags
-    output [15:0] led,   // LEDs: resultado o flags
+    input btnU, 
+    input btnL,           // mostrar flags
+    output reg [15:0] led,   // LEDs: resultado o flags
     output [6:0] seg,    // display 7 segmentos
     output [3:0] an      // control de ánodos
 );
@@ -92,7 +96,7 @@ module top_FP_ALU_Basys3(
     clk_divider #(100_000_000) div(clk, btnR, slow_clk);
 
     // FSM
-    wire [2:0] state;
+    wire [3:0] state;
     wire start, valid_out;
 
     reg [31:0] op_a, op_b;
@@ -116,17 +120,55 @@ module top_FP_ALU_Basys3(
     clk_display disp(.slow_clk(slow_clk), .seg(seg), .an(an));
 
     // ======== Entrada de datos ========
+    //wire state_led;
+    //assign state_led = state;
     always @(posedge slow_clk or posedge btnR) begin
         if (btnR) begin
             op_a <= 0; op_b <= 0; op_code <= 0; mode_fp <= 0;
         end else begin
             case (state)
-                3'd0: if (btnC) mode_fp <= sw[15];   // SW15 selecciona modo
-                3'd1: if (btnC) op_a[15:0]  <= sw;
-                3'd2: if (btnC) op_a[31:16] <= sw;
-                3'd3: if (btnC) op_b[15:0]  <= sw;
-                3'd4: if (btnC) op_b[31:16] <= sw;
-                3'd5: if (btnC) op_code     <= sw[1:0];
+                3'd0:begin 
+                led <= state;
+                if (btnL)begin
+                 mode_fp <= sw[15];
+                 led <=3'd7;
+                 end   // SW15 selecciona modo
+                end
+                3'd1: begin
+                led <= state;
+                 if(btnL)  begin
+                  op_a[15:0]  <= sw;
+                 led <=3'd7;
+                 end
+                 end
+                3'd2: begin
+                led <= state;
+                 if (btnL)begin
+                  op_a[31:16] <= sw;
+                   led <=3'd7;
+                   end
+                 end
+                3'd3: begin
+                led <= state;
+                if (btnL) begin
+                op_b[15:0]  <= sw;
+                 led <=3'd7;
+                end
+                end
+                3'd4:begin
+                led <= state;
+                 if (btnL)begin
+                  op_b[31:16] <= sw;
+                   led <=3'd7;
+                  end
+                 end
+                3'd5: begin 
+                led <=result[15:0];
+                 end
+                3'd6: begin 
+                led <=result[31:16];
+                end
+                3'd7: led <=flags;
             endcase
         end
     end
@@ -159,8 +201,256 @@ module top_FP_ALU_Basys3(
     end
 
     // ======== Salida a LEDs ========
-    assign led = (show_flags) ? {11'b0, flags} : result[15:0];
+    //assign led = (show_flags) ? {11'b0, flags} : result[15:0];
 endmodule
+
+
+
+module FP_ALU_if (
+    input  [31:0] op_a, op_b,
+    input  [1:0]  op_code,        
+    input         clk, rst,
+    input         start,
+    input         mode_fp,        
+    output reg [31:0] result,
+    output reg [4:0]  flags,      
+    output reg        valid_out
+);
+
+    wire [7:0] bias_sel     = mode_fp ? 8'd15  : 8'd127;
+    wire [7:0] exp_max_sel  = mode_fp ? 8'd30  : 8'd254;
+    wire [7:0] exp_min_sel  = 8'd1;
+
+    reg sign_a, sign_b, sign_res;
+    reg [7:0] exp_a, exp_b, exp_res;
+    reg [23:0] mant_a, mant_b;
+    reg [24:0] mant_sum;
+    reg [7:0]  exp_diff;
+    reg a_is_nan, b_is_nan, a_is_inf, b_is_inf, a_is_zero, b_is_zero;
+    reg [47:0] q, div_numer, remainder;
+    reg [22:0] frac_div;
+    reg [23:0] frac_round;
+    reg guard_bit, sticky_bit, lsb_bit;
+    reg round_inc, overflow, underflow;
+    reg [47:0] product;
+    reg [22:0] frac_mul;
+    reg did_round;
+
+
+    always @(*) begin
+        result     = 32'b0;
+        flags      = 5'b00000;
+        valid_out  = 1'b0;
+
+        if (mode_fp) begin
+            sign_a = op_a[15];
+            sign_b = op_b[15];
+            exp_a  = {3'b000, op_a[14:10]};
+            exp_b  = {3'b000, op_b[14:10]};
+            mant_a = (exp_a[4:0]==5'd0) ? {1'b0, op_a[9:0], 13'b0} : {1'b1, op_a[9:0], 13'b0};
+            mant_b = (exp_b[4:0]==5'd0) ? {1'b0, op_b[9:0], 13'b0} : {1'b1, op_b[9:0], 13'b0};
+
+            a_is_nan  = (exp_a[4:0]==5'h1F) && (op_a[9:0]!=0);
+            b_is_nan  = (exp_b[4:0]==5'h1F) && (op_b[9:0]!=0);
+            a_is_inf  = (exp_a[4:0]==5'h1F) && (op_a[9:0]==0);
+            b_is_inf  = (exp_b[4:0]==5'h1F) && (op_b[9:0]==0);
+            a_is_zero = (exp_a[4:0]==5'd0)  && (op_a[9:0]==0);
+            b_is_zero = (exp_b[4:0]==5'd0)  && (op_b[9:0]==0);
+        end else begin
+            sign_a = op_a[31];
+            sign_b = op_b[31];
+            exp_a  = op_a[30:23];
+            exp_b  = op_b[30:23];
+            mant_a = (exp_a==8'd0) ? {1'b0, op_a[22:0]} : {1'b1, op_a[22:0]};
+            mant_b = (exp_b==8'd0) ? {1'b0, op_b[22:0]} : {1'b1, op_b[22:0]};
+
+            a_is_nan  = (exp_a==8'hFF) && (op_a[22:0]!=0);
+            b_is_nan  = (exp_b==8'hFF) && (op_b[22:0]!=0);
+            a_is_inf  = (exp_a==8'hFF) && (op_a[22:0]==0);
+            b_is_inf  = (exp_b==8'hFF) && (op_b[22:0]==0);
+            a_is_zero = (exp_a==8'd0)  && (op_a[22:0]==0);
+            b_is_zero = (exp_b==8'd0)  && (op_b[22:0]==0);
+        end
+
+        case (op_code)
+ 
+        2'b00, 2'b01: begin
+
+            if (a_is_nan || b_is_nan) begin
+                result = mode_fp ? {16'b0, 16'h7E00} : 32'h7FC00000;
+                flags[4] = 1'b1; // invalid
+            end else if (a_is_inf && b_is_inf && (sign_a != (op_code==2'b01 ? ~sign_b : sign_b))) begin
+                result = mode_fp ? {16'b0, 16'h7E00} : 32'h7FC00000;
+                flags[4] = 1'b1;
+            end else begin
+                if (op_code == 2'b01) sign_b = ~sign_b;
+
+                if (exp_a > exp_b) begin
+                    exp_diff = exp_a - exp_b;
+                    mant_b = mant_b >> exp_diff;
+                    exp_res = exp_a;
+                end else if (exp_b > exp_a) begin
+                    exp_diff = exp_b - exp_a;
+                    mant_a = mant_a >> exp_diff;
+                    exp_res = exp_b;
+                end else begin
+                    exp_res = exp_a;
+                end
+
+                if (sign_a == sign_b) begin
+                    mant_sum = mant_a + mant_b;
+                    sign_res = sign_a;
+                end else begin
+                    if (mant_a >= mant_b) begin
+                        mant_sum = mant_a - mant_b;
+                        sign_res = sign_a;
+                    end else begin
+                        mant_sum = mant_b - mant_a;
+                        sign_res = sign_b;
+                    end
+                end
+
+                if (mant_sum[24]) begin
+                    mant_sum = mant_sum >> 1;
+                    exp_res  = exp_res + 1;
+                end else if (!mant_sum[23] && mant_sum != 0) begin
+                    mant_sum = mant_sum << 1;
+                    exp_res  = exp_res - 1;
+                end
+
+                guard_bit = mant_sum[0];
+                lsb_bit   = mant_sum[1];
+                did_round = guard_bit & ~lsb_bit;
+
+                flags[2] = (exp_res > exp_max_sel);
+                flags[1] = (exp_res < exp_min_sel);
+                flags[0] = did_round | guard_bit;  
+
+                if (flags[2])
+                    result = mode_fp ? {16'b0, sign_res, 5'h1F, 10'd0} : {sign_res, 8'hFF, 23'd0};
+                else if (flags[1] || mant_sum==0)
+                    result = {sign_res, 31'd0};
+                else if (mode_fp)
+                    result = {16'b0, sign_res, exp_res[4:0], mant_sum[22:13]};
+                else
+                    result = {sign_res, exp_res[7:0], mant_sum[22:0]};
+            end
+        end
+
+   
+        2'b10: begin
+           
+
+            if (a_is_nan || b_is_nan || (a_is_inf && b_is_zero) || (b_is_inf && a_is_zero)) begin
+                result = mode_fp ? {16'b0, 16'h7E00} : 32'h7FC00000;
+                flags[4] = 1'b1;
+            end else if (a_is_inf || b_is_inf) begin
+                sign_res = sign_a ^ sign_b;
+                result = mode_fp ? {16'b0, sign_res, 5'h1F, 10'd0} : {sign_res, 8'hFF, 23'd0};
+            end else if (a_is_zero || b_is_zero) begin
+                result = {sign_a ^ sign_b, 31'd0};
+            end else begin
+                sign_res = sign_a ^ sign_b;
+                product = mant_a * mant_b;
+                exp_res = exp_a + exp_b - bias_sel;
+
+                if (product[47]) begin
+                    product = product >> 1;
+                    exp_res = exp_res + 1;
+                end
+
+                frac_mul = product[45:23];
+                lsb_bit = product[23];
+                guard_bit = product[22];
+                sticky_bit = |product[21:0];
+                round_inc = guard_bit & (sticky_bit | lsb_bit);
+                frac_round = {1'b0, frac_mul} + round_inc;
+
+                if (frac_round[23]) begin
+                    frac_round = frac_round >> 1;
+                    exp_res = exp_res + 1;
+                end
+
+                overflow = (exp_res > exp_max_sel);
+                underflow = (exp_res < exp_min_sel);
+                flags[2] = overflow;
+                flags[1] = underflow;
+                flags[0] = round_inc;
+
+                if (overflow)
+                    result = mode_fp ? {16'b0, sign_res, 5'h1F, 10'd0} : {sign_res, 8'hFF, 23'd0};
+                else if (underflow)
+                    result = {sign_res, 31'd0};
+                else if (mode_fp)
+                    result = {16'b0, sign_res, exp_res[4:0], frac_round[22:13]};
+                else
+                    result = {sign_res, exp_res[7:0], frac_round[22:0]};
+            end
+        end
+
+
+        2'b11: begin
+           
+
+            if (a_is_nan || b_is_nan) begin
+                result = mode_fp ? {16'b0, 16'h7E00} : 32'h7FC00000;
+                flags[4] = 1'b1;
+            end else if ((a_is_zero && b_is_zero) || (a_is_inf && b_is_inf)) begin
+                result = mode_fp ? {16'b0, 16'h7E00} : 32'h7FC00000;
+                flags[4] = 1'b1;
+            end else if (b_is_zero) begin
+                flags[3] = 1'b1; // div0
+                result = mode_fp ? {16'b0, sign_a ^ sign_b, 5'h1F, 10'd0} : {sign_a ^ sign_b, 8'hFF, 23'd0};
+            end else begin
+                sign_res = sign_a ^ sign_b;
+                div_numer = {mant_a, 24'b0};
+                q = div_numer / mant_b;
+                remainder = div_numer % mant_b;
+                exp_res = (exp_a - exp_b) + bias_sel;
+
+                if (q[25]) begin
+                    q = q >> 1;
+                    exp_res = exp_res + 1;
+                end else if (!q[24]) begin
+                    q = q << 1;
+                    exp_res = exp_res - 1;
+                end
+
+                frac_div = q[23:1];
+                lsb_bit = q[1];
+                guard_bit = q[0];
+                sticky_bit = (remainder != 0);
+                round_inc = guard_bit & (sticky_bit | lsb_bit);
+                frac_round = {1'b0, frac_div} + round_inc;
+
+                if (frac_round[23]) begin
+                    frac_round = frac_round >> 1;
+                    exp_res = exp_res + 1;
+                end
+
+                overflow = (exp_res > exp_max_sel);
+                underflow = (exp_res < exp_min_sel);
+                flags[2] = overflow;
+                flags[1] = underflow;
+                flags[0] = guard_bit | sticky_bit;
+
+                if (overflow)
+                    result = mode_fp ? {16'b0, sign_res, 5'h1F, 10'd0} : {sign_res, 8'hFF, 23'd0};
+                else if (underflow)
+                    result = {sign_res, 31'd0};
+                else if (mode_fp)
+                    result = {16'b0, sign_res, exp_res[4:0], frac_round[22:13]};
+                else
+                    result = {sign_res, exp_res[7:0], frac_round[22:0]};
+            end
+        end
+        endcase
+
+        valid_out = 1'b1;
+    end
+endmodule
+
+XDC:
 
 ## ==========================
 ## CLOCK
@@ -170,7 +460,7 @@ set_property IOSTANDARD LVCMOS33 [get_ports clk]
 create_clock -add -name sys_clk_pin -period 10.00 -waveform {0 5} [get_ports clk]
 
 ## ==========================
-## SWITCHES (SW0–SW15)
+## SWITCHES (SW0-SW15)
 ## ==========================
 # SW15 controla mode_fp (0 = FP32, 1 = FP16)
 set_property PACKAGE_PIN R2 [get_ports {sw[15]}]
@@ -199,10 +489,11 @@ set_property IOSTANDARD LVCMOS33 [get_ports {sw[*]}]
 set_property PACKAGE_PIN U18 [get_ports btnC]
 set_property PACKAGE_PIN T18 [get_ports btnU]
 set_property PACKAGE_PIN T17 [get_ports btnR]
-set_property IOSTANDARD LVCMOS33 [get_ports {btnC btnU btnR}]
+set_property PACKAGE_PIN W19 [get_ports btnL]	
+set_property IOSTANDARD LVCMOS33 [get_ports {btnC btnL btnU btnR}]
 
 ## ==========================
-## LEDS (LD0–LD15)
+## LEDS (LD0-LD15)
 ## ==========================
 set_property PACKAGE_PIN U16 [get_ports {led[0]}]
 set_property PACKAGE_PIN E19 [get_ports {led[1]}]
