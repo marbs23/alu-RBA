@@ -47,11 +47,12 @@ endmodule
 // =====================================================
 module control_FSM(
     input clk, rst, btnC, btnR, valid_out,
-    output reg [2:0] state,
+    output reg [3:0] state,
     output reg start
 );
-    localparam S0=3'd0, S1=3'd1, S2=3'd2, S3=3'd3, S4=3'd4, S5=3'd5, S6=3'd6,S7=3'd7;
-    reg [2:0] next_state;
+    localparam S0=4'd0, S1=4'd1, S2=4'd2, S3=4'd3, S4=4'd4,
+               S5=4'd5, S6=4'd6, S7=4'd7, S8=4'd8;
+    reg [3:0] next_state;
 
     always @(posedge clk or posedge rst)
         if (rst) state <= S0;
@@ -64,17 +65,19 @@ module control_FSM(
             S1: if (btnC) next_state = S2;
             S2: if (btnC) next_state = S3;
             S3: if (btnC) next_state = S4;
-            S4: if (btnC) next_state = S5;
-            S5: if (btnC) next_state = S6;
+            S4: if (btnC) next_state = S5;   // <--- nuevo paso para seleccionar op_code
+            S5: if (btnC) next_state = S6;   // ahora recién pasamos a mostrar resultados
             S6: if (btnC) next_state = S7;
-            S7: if (btnR) next_state = S0;
+            S7: if (btnC) next_state = S8;
+            S8: if (btnR) next_state = S0;
         endcase
     end
 
     always @(*) begin
-        start = (state == S4 && btnC);
+        start = (state == S5 && btnC);  // <--- ahora start ocurre después de seleccionar operación
     end
 endmodule
+
 
 
 // =====================================================
@@ -123,55 +126,66 @@ module top_FP_ALU_Basys3(
     //wire state_led;
     //assign state_led = state;
     always @(posedge slow_clk or posedge btnR) begin
-        if (btnR) begin
-            op_a <= 0; op_b <= 0; op_code <= 0; mode_fp <= 0;
-        end else begin
-            case (state)
-                3'd0:begin 
-                led <= state;
-                if (btnL)begin
-                 mode_fp <= sw[15];
-                 led <=3'd7;
-                 end   // SW15 selecciona modo
-                end
-                3'd1: begin
-                led <= state;
-                 if(btnL)  begin
-                  op_a[15:0]  <= sw;
-                 led <=3'd7;
-                 end
-                 end
-                3'd2: begin
-                led <= state;
-                 if (btnL)begin
-                  op_a[31:16] <= sw;
-                   led <=3'd7;
-                   end
-                 end
-                3'd3: begin
+    if (btnR) begin
+        op_a <= 0; op_b <= 0; op_code <= 0; mode_fp <= 0;
+    end else begin
+        case (state)
+            4'd0: begin
                 led <= state;
                 if (btnL) begin
-                op_b[15:0]  <= sw;
-                 led <=3'd7;
+                    mode_fp <= sw[15]; // selecciona modo
+                    led <= 4'd7;
                 end
-                end
-                3'd4:begin
+            end
+
+            4'd1: begin
                 led <= state;
-                 if (btnL)begin
-                  op_b[31:16] <= sw;
-                   led <=3'd7;
-                  end
-                 end
-                3'd5: begin 
-                led <=result[15:0];
-                 end
-                3'd6: begin 
-                led <=result[31:16];
+                if (btnL) begin
+                    op_a[15:0] <= sw;
+                    led <= 4'd7;
                 end
-                3'd7: led <=flags;
-            endcase
-        end
+            end
+
+            4'd2: begin
+                led <= state;
+                if (btnL) begin
+                    op_a[31:16] <= sw;
+                    led <= 4'd7;
+                end
+            end
+
+            4'd3: begin
+                led <= state;
+                if (btnL) begin
+                    op_b[15:0] <= sw;
+                    led <= 4'd7;
+                end
+            end
+
+            4'd4: begin
+                led <= state;
+                if (btnL) begin
+                    op_b[31:16] <= sw;
+                    led <= 4'd7;
+                end
+            end
+
+            // === NUEVO ESTADO ===
+            4'd5: begin
+                led <= 16'h00F0; // Indicar selección de operación
+                if (btnL) begin
+                    op_code <= sw[1:0]; // 00=add,01=sub,10=mul,11=div
+                    led <= 16'h0F00;    // feedback visual
+                end
+            end
+
+            4'd6: led <= result[15:0];
+            4'd7: led <= result[31:16];
+            4'd8: led <= flags;
+        endcase
     end
+end
+
 
     // ======== ALU ========
     FP_ALU_if alu(
