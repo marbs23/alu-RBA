@@ -44,17 +44,19 @@ endmodule
 // 3. FSM de control
 // =====================================================
 module control_FSM(
-    input clk, rst, btnC, btnR,btnU, valid_out,
+    input clk, rst, btnC, btnR, btnU,
     output reg [2:0] state,
     output reg start
 );
     localparam S0=3'd0, S1=3'd1, S2=3'd2, S3=3'd3, S4=3'd4, S5=3'd5, S6=3'd6,S7=3'd7;
     reg [2:0] next_state;
 
+    // REGISTER FSM
     always @(posedge clk or posedge rst)
         if (rst) state <= S0;
         else     state <= next_state;
 
+    // NEXT STATE LOGIC
     always @(*) begin
         next_state = state;
         case (state)
@@ -69,8 +71,9 @@ module control_FSM(
         endcase
     end
 
+    // OUTUPUT LOGIC
     always @(*) begin
-        start = (state == S4 && btnC);
+        start = (state == S6 && btnC);
     end
 endmodule
 
@@ -80,14 +83,14 @@ endmodule
 // =====================================================
 module top_FP_ALU_Basys3(
     input clk,
-    input btnR,          // reset global
-    input [15:0] sw,     // switches de entrada
-    input btnC,          // confirmar / avanzar FSM
-    input btnU, 
-    input btnL,           // mostrar flags
+    input [15:0] sw,         // switches de entrada
+    input btnR,              // reset global
+    input btnC,              // confirmar / avanzar FSM
+    input btnU,              // mostrar flags
+    input btnL,              // cargar valor
     output reg [15:0] led,   // LEDs: resultado o flags
-    output [6:0] seg,    // display 7 segmentos
-    output [3:0] an      // control de ánodos
+    output [6:0] seg,        // display 7 segmentos
+    output [3:0] an          // control de ánodos
 );
     // Clock lento (~2 s)
     wire slow_clk;
@@ -110,7 +113,6 @@ module top_FP_ALU_Basys3(
         .btnC(btnC),
         .btnR(btnR),
         .btnU(btnU),
-        .valid_out(valid_out),
         .state(state),
         .start(start)
     );
@@ -119,64 +121,69 @@ module top_FP_ALU_Basys3(
     clk_display disp(.slow_clk(slow_clk), .seg(seg), .an(an));
 
     // ======== Entrada de datos ========
-    //wire state_led;
-    //assign state_led = state;
     always @(posedge slow_clk or posedge btnR) begin
         if (btnR) begin
             op_a <= 0; op_b <= 0; op_code <= 0; mode_fp <= 0;
         end else begin
             case (state)
                 3'd0:begin 
-                led <= state;
-                if (btnL)begin
-                 mode_fp <= sw[15];
-                 led <=3'd7;
-                 end   // SW15 selecciona modo
+                    led <= state;
+                    if (btnL) begin
+                        mode_fp <= sw[15];
+                        led <= 3'd7;
+                    end   // SW15 selecciona modo
                 end
+
                 3'd1: begin
-                led <= state;
-                 if(btnL)  begin
-                  op_a[15:0]  <= sw;
-                 led <=3'd7;
-                 end
-                 end
+                    led <= state;
+                    if(btnL) begin
+                        op_a[15:0] <= sw;
+                        led <= 3'd7;
+                    end
+                end
+
                 3'd2: begin
-                led <= state;
-                 if (btnL)begin
-                  op_a[31:16] <= sw;
-                   led <=3'd7;
-                   end
-                 end
+                    led <= state;
+                    if (btnL) begin
+                        op_a[31:16] <= sw;
+                        led <= 3'd7;
+                    end
+                end
+
                 3'd3: begin
-                led <= state;
-                if (btnL) begin
-                op_b[15:0]  <= sw;
-                 led <=3'd7;
+                    led <= state;
+                    if (btnL) begin
+                        op_b[15:0]  <= sw;
+                        led <= 3'd7;
+                    end
                 end
+
+                3'd4: begin
+                    led <= state;
+                    if (btnL) begin
+                        op_b[31:16] <= sw;
+                        led <= 3'd7;
+                    end
                 end
-                3'd4:begin
-                led <= state;
-                 if (btnL)begin
-                  op_b[31:16] <= sw;
-                   led <=3'd7;
-                  end
-                 end
+
                 3'd5: begin 
-                led <= state;
-                op_code[1:0] <= sw[1:0];
-                led <=3'd7;
-                 end
-                3'd6: begin 
-                led <=result[15:0];
-              
+                    led <= state;
+                    if (btnL) begin
+                        op_code[1:0] <= sw[1:0];
+                        led <= 3'd7;
+                    end
                 end
+
+                3'd6: begin
+                    led <= result[15:0];
+                end
+
                 3'd7: begin  
-                led <=result[31:16];
-                if (btnU) begin
-                led <=flags;
+                    led <= result[31:16];
+                    if (btnU) begin
+                        led <=flags;
+                    end
                 end
-                end
-                
             endcase
         end
     end
@@ -195,21 +202,6 @@ module top_FP_ALU_Basys3(
         .valid_out(valid_out)
     );
 
-    // ======== Botón para mostrar flags ========
-    reg btnU_sync0, btnU_sync1, show_flags;
-    always @(posedge slow_clk or posedge btnR) begin
-        if (btnR) begin
-            btnU_sync0 <= 0; btnU_sync1 <= 0; show_flags <= 0;
-        end else begin
-            btnU_sync0 <= btnU;
-            btnU_sync1 <= btnU_sync0;
-            if (btnU_sync0 & ~btnU_sync1)
-                show_flags <= ~show_flags;
-        end
-    end
-
-    // ======== Salida a LEDs ========
-    //assign led = (show_flags) ? {11'b0, flags} : result[15:0];
 endmodule
 
 
